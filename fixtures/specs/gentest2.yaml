@@ -1,0 +1,110 @@
+swagger: '2.0'
+info:
+  title: code generation test fixture for parameters, with default values
+  version: '1.0.0'
+host: localhost
+basePath: /
+consumes:
+  - application/json
+produces:
+  - application/json
+schemes:
+  - http
+paths:
+  /required/params:
+    get:
+      operationId: getRequired
+      parameters:
+      - name: aSentence         # <- with hint
+        in: query
+        type: string
+        required: true
+        x-datagen:
+          name: sentence
+      - name: aNumber         # <- with hint
+        in: query
+        type: number
+        required: true
+        x-datagen:
+          name: number
+      - name: aUUID         # <- with format rule
+        in: query
+        type: string
+        format: uuid3
+        required: true
+      - name: aFloat         # <- with type rule
+        in: query
+        type: number
+        required: true
+      - name: aFloat32         # <- with type & format rule
+        in: query
+        type: number
+        format: float
+        required: true
+      - name: aInt         # <- with format rule
+        in: query
+        type: number
+        format: uint32
+        required: true
+      - name: aDate         # <- with format rule
+        in: query
+        type: string
+        format: date
+        required: true
+      - name: aDateTime         # <- with format rule
+        in: query
+        type: string
+        format: date-time
+        required: true
+      - name: aDuration         # <- with format rule
+        in: query
+        type: string
+        format: duration
+        required: true
+      - name: aMinDouble         # <- with validation Minimum
+        in: query
+        type: number
+        format: double
+        minimum: 15
+      - name: aMaxDouble         # <- with validation Maximum
+        in: query
+        type: number
+        format: double
+        maximum: 15
+      - name: aMinMaxDouble         # <- with validation Minimum and Maximum
+        in: query
+        type: number
+        format: double
+        minimum: 10
+        maximum: 15
+      - name: aMultipleOfDouble         # <- with validation MultipleOf
+        in: query
+        type: number
+        format: double
+        multipleOf: 10
+      - name: a3Double         # <- with validation MultipleOf, Minimum and Maximum
+        in: query
+        type: number
+        format: double
+        minimum: 10
+        maximum: 50 
+        multipleOf: 10
+      - name: price         # <- with amount
+        in: query
+        type: number
+        format: double
+        x-datagen:
+          name: amount
+      responses: &stdResponses
+        200:
+          description: simple type
+          schema:
+            type: string
+            format: date
+        201:
+          description: simple type
+          schema:
+            type: string
+            format: uuid
+        default:
+          description: schema type

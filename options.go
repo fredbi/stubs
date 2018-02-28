@@ -1,34 +1,67 @@
 package stubs
 
 import (
-	"github.com/go-openapi/spec"
-	"github.com/go-openapi/swag"
 	"github.com/mitchellh/mapstructure"
 )
 
-// GeneratorOpts interface to capture various types that can get data generated for them.
-type GeneratorOpts interface {
+const (
+	// XdataGen is the extension tag to be used in specs and hint the stub generator
+	XdataGen = "x-datagen"
+	// StubsDefaultWordCount is the default maximum word count in sentences. It may be overriden with the "words" argument.
+	StubsDefaultWordCount = 10
+	// StubsDefaultStringLength is the default length for generated strings
+	StubsDefaultStringLength = 30
+	// StubsDefaultSupplemental defines if "supplemental" words from extra dictionary in faker is enabled
+	StubsDefaultSupplemental = true
+	// StubsDefaultMaxAmount defines the default max amount for prices and other currency amounts
+	StubsDefaultMaxAmount = 1000000
+	// StubsDefaultMinAmount defines the default min amount for prices and other currency amounts
+	StubsDefaultMinAmount = 100
+	// StubsDefaultMaxSmallAmount defines the default max amount for small prices and other small currency amounts
+	StubsDefaultMaxSmallAmount = 1000
+	// StubsDefaultMinSmallAmount defines the default min amount for small prices and other small currency amounts
+	StubsDefaultMinSmallAmount = 10
+)
+
+// basicGeneratorOpts publishes basic operations for GeneratorOpts
+type basicGeneratorOpts interface {
 	// value generator name
 	Name() string
 
 	// Args for the value generator (eg. number of words in a sentence)
+	// TODO(fredbi): the following may not be true now
 	// Arguments here are used to generate a valid value when no validations are specified.
 	// Args are used as default setting but validations can override the args should that be necessary.
-	Args() []interface{}
-
-	// FieldName for the value generator, this is mostly used as an alternative to the name
-	// for inferring which value generator to use
-	FieldName() string
-
-	// Type for the value generator to return, adids in inferring the name of the value generator
-	Type() string
-
-	// Format for the value generator to return, aids in inferring the name of the value generator
-	Format() string
+	Args() *argTags
 
 	// Mode which kind of random data to return and to indicate which validation(s) should fail.
 	// This is a bitmask so it allows for combinations of invalid values.
 	Mode() StubMode
+
+	// Infer deduces the generator to be used from inference rules
+	Infer()
+
+	// ExtOverride captures the arguments under the x-datagen extension
+	ExtOverride(map[string]interface{}) error
+	// SetArgs overrides Args
+	SetArgs(*argTags)
+}
+
+// GeneratorOpts interface to capture various types that can get data generated for them.
+type GeneratorOpts interface {
+	seeder
+	basicGeneratorOpts
+
+	// FieldName for the value generator, this is mostly used as an alternative to the name
+	// for inferring which value generator to use
+	// TODO(fredbi): atm unused
+	FieldName() string
+
+	// Type for the value generator to return, aids in infering the name of the value generator
+	Type() string
+
+	// Format for the value generator to return, aids in infering the name of the value generator
+	Format() string
 
 	// Maximum a numeric value can have, returns value, exclusive, defined
 	Maximum() (float64, bool, bool)
@@ -67,225 +100,117 @@ type GeneratorOpts interface {
 	Required() bool
 }
 
-func paramGenOpts(key string, param *spec.Parameter) (*simpleOpts, error) {
-	var gopts genOpts
-	if ext, ok := param.Extensions["x-datagen"]; ok {
-		if err := mapstructure.WeakDecode(ext, &gopts); err != nil {
-			return nil, err
-		}
-	}
-
-	if key == "" {
-		key = param.Name
-	}
-	return &simpleOpts{
-		name:              gopts.Name,
-		args:              gopts.Args,
-		fieldName:         key,
-		CommonValidations: param.CommonValidations,
-		SimpleSchema:      param.SimpleSchema,
-		required:          param.Required,
-	}, nil
+type boolOrMap struct {
+	Enabled bool
+	Args    map[string]string
 }
 
+type boolOrSlice struct {
+	Enabled bool
+	Args    []string
+}
+
+func (b *boolOrSlice) Contains(arg string) bool {
+	for _, v := range b.Args {
+		if v == arg {
+			return true
+		}
+	}
+	return false
+}
+
+// argTags describe all override options that may be set in generation options
+type argTags struct {
+	Valid                   boolOrMap   `mapstructure:"valid"`
+	Invalid                 boolOrMap   `mapstructure:"invalid"`
+	Lang                    []string    `mapstructure:"lang"`
+	Length                  int         `mapstructure:"length"`
+	Words                   int         `mapstructure:"words"`
+	Supplemental            bool        `mapstructure:"supplemental"`
+	Max                     *float64    `mapstructure:"max"`
+	Min                     *float64    `mapstructure:"min"`
+	MultipleOf              *float64    `mapstructure:"multipleOf"`
+	Precision               *int64      `mapstructure:"precision"`
+	WithExample             boolOrMap   `mapstructure:"withExample"`
+	WithDefault             boolOrMap   `mapstructure:"withDefault"`
+	WithEdgeCase            boolOrSlice `mapstructure:"withEdgeCase"`
+	WithTilting             boolOrMap   `mapstructure:"withTilting"`
+	WithAllValidationChecks boolOrMap   `mapstructure:"withAllValidationChecks"`
+	SkipTilting             bool        `mapstructure:"skipTilting"`
+	SkipFuzzying            bool        `mapstructure:"skipFuzzying"`
+}
+
+// genTag describe the structure of a x-datagen hint in the swagger spec
+type genTag struct {
+	Name string   `mapstructure:"name"` // name refers to the stub generator's key
+	Args argTags  `mapstructure:"args"` // args define specific behavior expected from the generator
+	Mode StubMode `mapstructure:"mode"` // mode selects the stub generation strategy
+}
+
+// genOpts is the concrete type for basic common generation options
 type genOpts struct {
-	Name string        `mapstructure:"name"`
-	Args []interface{} `mapstructure:"args"`
+	name  string   // name refers to the stub generator's key
+	args  argTags  // args define specific behavior expected from the generator
+	mode  StubMode // mode selects the stub generation strategy
+	rules []ruler  // rules is the ordered list of rules used to infer the generator options
 }
 
-func headerGenOpts(key string, header *spec.Header) (*simpleOpts, error) {
-	var gopts genOpts
-	if ext, ok := header.Extensions["x-datagen"]; ok {
-		if err := mapstructure.WeakDecode(ext, &gopts); err != nil {
-			return nil, err
-		}
-	}
-	return &simpleOpts{
-		name:              gopts.Name,
-		args:              gopts.Args,
-		fieldName:         key,
-		CommonValidations: header.CommonValidations,
-		SimpleSchema:      header.SimpleSchema,
-		required:          true,
-	}, nil
+func (g *genOpts) Name() string {
+	return g.name
 }
 
-func itemsGenOpts(key string, items *spec.Items) (*simpleOpts, error) {
-	var gopts genOpts
-	if ext, ok := items.Extensions["x-datagen"]; ok {
-		if err := mapstructure.WeakDecode(ext, &gopts); err != nil {
-			return nil, err
-		}
-	}
-	return &simpleOpts{
-		name:              gopts.Name,
-		args:              gopts.Args,
-		fieldName:         key,
-		CommonValidations: items.CommonValidations,
-		SimpleSchema:      items.SimpleSchema,
-		required:          true,
-	}, nil
+func (g *genOpts) Args() *argTags {
+	return &g.args
 }
 
-func schemaGenOpts(key string, required bool, schema *spec.Schema) (*schemaOpts, error) {
-	var gopts genOpts
-	if ext, ok := schema.Extensions["x-datagen"]; ok {
-		if err := mapstructure.WeakDecode(ext, &gopts); err != nil {
-			return nil, err
-		}
-	}
-	return &schemaOpts{
-		name:      gopts.Name,
-		args:      gopts.Args,
-		fieldName: key,
-		schema:    schema,
-		required:  required,
-	}, nil
-}
-
-type simpleOpts struct {
-	spec.CommonValidations
-	spec.SimpleSchema
-
-	name      string
-	args      []interface{}
-	fieldName string
-	required  bool
-	mode      StubMode
-}
-
-func (g *simpleOpts) Mode() StubMode {
+func (g *genOpts) Mode() StubMode {
 	return g.mode
 }
 
-func (g *simpleOpts) Args() []interface{} {
-	return g.args
+func (g *genOpts) SetArgs(args *argTags) {
+	g.args = *args
 }
 
-func (g *simpleOpts) Name() string {
-	return g.name
-}
-func (g *simpleOpts) FieldName() string {
-	return g.fieldName
-}
-func (g *simpleOpts) Maximum() (float64, bool, bool) {
-	return swag.Float64Value(g.CommonValidations.Maximum), g.CommonValidations.ExclusiveMaximum, g.CommonValidations.Maximum != nil
-}
-func (g *simpleOpts) Minimum() (float64, bool, bool) {
-	return swag.Float64Value(g.CommonValidations.Minimum), g.CommonValidations.ExclusiveMinimum, g.CommonValidations.Minimum != nil
-}
-func (g *simpleOpts) MaxLength() (int64, bool) {
-	return swag.Int64Value(g.CommonValidations.MaxLength), g.CommonValidations.MaxLength != nil
-}
-func (g *simpleOpts) MinLength() (int64, bool) {
-	return swag.Int64Value(g.CommonValidations.MinLength), g.CommonValidations.MinLength != nil
-}
-func (g *simpleOpts) Pattern() (string, bool) {
-	return g.CommonValidations.Pattern, g.CommonValidations.Pattern != ""
-}
-func (g *simpleOpts) MaxItems() (int64, bool) {
-	mx := g.CommonValidations.MaxItems
-	return swag.Int64Value(mx), mx != nil
-}
-func (g *simpleOpts) MinItems() (int64, bool) {
-	mn := g.CommonValidations.MinItems
-	return swag.Int64Value(mn), mn != nil
-}
-func (g *simpleOpts) UniqueItems() bool {
-	return g.CommonValidations.UniqueItems
-}
-func (g *simpleOpts) MultipleOf() (float64, bool) {
-	mo := g.CommonValidations.MultipleOf
-	return swag.Float64Value(mo), mo != nil
-}
-func (g *simpleOpts) Enum() ([]interface{}, bool) {
-	enm := g.CommonValidations.Enum
-	return enm, len(enm) > 0
-}
-func (g *simpleOpts) Type() string {
-	return g.SimpleSchema.Type
-}
-func (g *simpleOpts) Format() string {
-	return g.SimpleSchema.Format
-}
-func (g *simpleOpts) Items() (GeneratorOpts, error) {
-	return itemsGenOpts(g.name+".items", g.SimpleSchema.Items)
-}
-func (g *simpleOpts) Required() bool {
-	return g.required
-}
-
-type schemaOpts struct {
-	schema *spec.Schema
-
-	name string
-	args []interface{}
-
-	fieldName string
-	required  bool
-	mode      StubMode
-}
-
-func (s *schemaOpts) Mode() StubMode {
-	return s.mode
-}
-
-func (s *schemaOpts) Args() []interface{} {
-	return s.args
-}
-
-func (s *schemaOpts) Name() string {
-	return s.name
-}
-func (s *schemaOpts) FieldName() string {
-	return s.fieldName
-}
-func (s *schemaOpts) Maximum() (float64, bool, bool) {
-	return swag.Float64Value(s.schema.Maximum), s.schema.ExclusiveMaximum, s.schema.Maximum != nil
-}
-func (s *schemaOpts) Minimum() (float64, bool, bool) {
-	return swag.Float64Value(s.schema.Minimum), s.schema.ExclusiveMinimum, s.schema.Minimum != nil
-}
-func (s *schemaOpts) MaxLength() (int64, bool) {
-	return swag.Int64Value(s.schema.MaxLength), s.schema.MaxLength != nil
-}
-func (s *schemaOpts) MinLength() (int64, bool) {
-	return swag.Int64Value(s.schema.MinLength), s.schema.MinLength != nil
-}
-func (s *schemaOpts) Pattern() (string, bool) {
-	return s.schema.Pattern, s.schema.Pattern != ""
-}
-func (s *schemaOpts) MaxItems() (int64, bool) {
-	mx := s.schema.MaxItems
-	return swag.Int64Value(mx), mx != nil
-}
-func (s *schemaOpts) MinItems() (int64, bool) {
-	mn := s.schema.MinItems
-	return swag.Int64Value(mn), mn != nil
-}
-func (s *schemaOpts) UniqueItems() bool {
-	return s.schema.UniqueItems
-}
-func (s *schemaOpts) MultipleOf() (float64, bool) {
-	mo := s.schema.MultipleOf
-	return swag.Float64Value(mo), mo != nil
-}
-func (s *schemaOpts) Enum() ([]interface{}, bool) {
-	enm := s.schema.Enum
-	return enm, len(enm) > 0
-}
-func (s *schemaOpts) Type() string {
-	if len(s.schema.Type) == 0 {
-		return "object"
+// Infer chains inference rules to take a decision about the generator option to set
+func (g *genOpts) Infer() {
+	var decisions = make([]basicGeneratorOpts, 0, 50)
+	for _, rule := range g.rules {
+		decision := rule.Decide()
+		if decision != nil {
+			debugLog("decision: %v", decision)
+			decisions = append(decisions, rule.Decide())
+		}
 	}
-	return s.schema.Type[0]
+	g.merge(decisions)
 }
-func (s *schemaOpts) Format() string {
-	return s.schema.Format
+
+// merge merges decisions from several rulers
+func (g *genOpts) merge(decisions []basicGeneratorOpts) {
+	// Merge decisions from inference rules
+	for _, d := range decisions {
+		debugLog("merging decision: %v", d)
+		if d.Name() != "" {
+			g.name = d.Name()
+		}
+		// other args...
+	}
+	return
 }
-func (s *schemaOpts) Items() (GeneratorOpts, error) {
-	return schemaGenOpts(s.fieldName+".items", false, s.schema.Items.Schema)
-}
-func (s *schemaOpts) Required() bool {
-	return s.required
+
+// ExtOverride captures the arguments under the x-datagen extension
+func (g *genOpts) ExtOverride(extensions map[string]interface{}) error {
+	if ext, ok := extensions[XdataGen]; ok {
+		debugLog("found extension")
+		// TODO: factorize in loadOpts()
+		// whenever a x-datagen extension is specified, take its directives for granted
+		tag := genTag{}
+		if err := mapstructure.WeakDecode(ext, &tag); err != nil {
+			return err
+		}
+		g.name = tag.Name
+		g.args = tag.Args
+		g.mode = tag.Mode
+		return nil
+	}
+	return nil
 }
